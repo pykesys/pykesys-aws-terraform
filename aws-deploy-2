@@ -1,0 +1,328 @@
+============================
+create a terraform config that deploys the following to AWS:
+
+iam config:
+
+username: pykesys-infra, mfa enabled, this user will be used by terraform to deploy/modify/destroy all aws resources like ec2, efs, ebs, route53, etc.
+username or role?: pykesys-db-user - used for webapp server to talk to db server
+username or role?: pykesys-app-user - used to access webapp
+
+architecture config:
+
+EFS volume named pykesys-vol shared by all EC2 instances defined here:
+
+EC2 instance: app.pykesys.com security group will allow traffic for nginx, php
+EC2 instance: db.pykesys.com:  security group will allow traffic for mysql
+EC2 instance: noc.pykesys.com:  security group will allow traffic for openldap, influxdb, grafana, sendmail, postfix
+
+ROUTE53 accept all traffic to pykesys.com 
+and redirect web traffic to server webapp.pykesys.com
+and redirect email traffic to noc.pykesys.com
+
+--------------------
+
+Here is a comprehensive **Terraform configuration** to deploy the requested architecture on AWS:
+
+---
+
+### **Directory Structure**
+Organize your files for modularity:
+```
+terraform/
+├── main.tf
+├── variables.tf
+├── outputs.tf
+```
+
+---
+
+### **`main.tf`**
+```hcl
+provider "aws" {
+  region = "us-east-1"
+}
+
+# IAM User for Terraform Management
+resource "aws_iam_user" "pykesys_infra" {
+  name = "pykesys-infra"
+}
+
+resource "aws_iam_user_policy" "pykesys_infra_policy" {
+  name = "pykesys-infra-policy"
+  user = aws_iam_user.pykesys_infra.name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action   = "*"
+        Effect   = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_user_login_profile" "pykesys_infra_login" {
+  user     = aws_iam_user.pykesys_infra.name
+  password = "TemporaryPassword123!"
+  password_reset_required = true
+}
+
+resource "aws_iam_user_mfa_device" "pykesys_infra_mfa" {
+  user           = aws_iam_user.pykesys_infra.name
+  serial_number  = var.mfa_serial_number # Replace with the MFA serial
+  authentication_code_1 = var.mfa_code_1
+  authentication_code_2 = var.mfa_code_2
+}
+
+# IAM Roles for DB and App Access
+resource "aws_iam_role" "pykesys_db_user" {
+  name = "pykesys-db-user"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "sts:AssumeRole"
+        Effect    = "Allow"
+        Principal = { Service = "ec2.amazonaws.com" }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "pykesys_app_user" {
+  name = "pykesys-app-user"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "sts:AssumeRole"
+        Effect    = "Allow"
+        Principal = { Service = "ec2.amazonaws.com" }
+      }
+    ]
+  })
+}
+
+# VPC and Subnet
+resource "aws_vpc" "pykesys_vpc" {
+  cidr_block = "10.0.0.0/16"
+}
+
+resource "aws_subnet" "pykesys_subnet" {
+  vpc_id            = aws_vpc.pykesys_vpc.id
+  cidr_block        = "10.0.1.0/24"
+  map_public_ip_on_launch = true
+}
+
+# EFS Volume
+resource "aws_efs_file_system" "pykesys_vol" {
+  creation_token = "pykesys-vol"
+  lifecycle_policy {
+    transition_to_ia = "AFTER_30_DAYS"
+  }
+}
+
+resource "aws_efs_mount_target" "pykesys_vol_mount" {
+  file_system_id = aws_efs_file_system.pykesys_vol.id
+  subnet_id      = aws_subnet.pykesys_subnet.id
+  security_groups = [aws_security_group.efs_sg.id]
+}
+
+resource "aws_security_group" "efs_sg" {
+  name        = "efs-sg"
+  description = "Security group for EFS"
+  vpc_id      = aws_vpc.pykesys_vpc.id
+
+  ingress {
+    from_port   = 2049
+    to_port     = 2049
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# Security Groups
+resource "aws_security_group" "app_sg" {
+  name        = "app-sg"
+  description = "Security group for web app"
+  vpc_id      = aws_vpc.pykesys_vpc.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_security_group" "db_sg" {
+  name        = "db-sg"
+  description = "Security group for database server"
+  vpc_id      = aws_vpc.pykesys_vpc.id
+
+  ingress {
+    from_port   = 3306
+    to_port     = 3306
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_security_group" "noc_sg" {
+  name        = "noc-sg"
+  description = "Security group for NOC server"
+  vpc_id      = aws_vpc.pykesys_vpc.id
+
+  ingress {
+    from_port   = 389
+    to_port     = 389
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+
+  ingress {
+    from_port   = 8086
+    to_port     = 8086
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# Instances
+resource "aws_instance" "app_instance" {
+  ami           = var.app_ami
+  instance_type = "t2.micro"
+  subnet_id     = aws_subnet.pykesys_subnet.id
+  security_groups = [aws_security_group.app_sg.name]
+
+  tags = {
+    Name = "app.pykesys.com"
+  }
+}
+
+resource "aws_instance" "db_instance" {
+  ami           = var.db_ami
+  instance_type = "t2.micro"
+  subnet_id     = aws_subnet.pykesys_subnet.id
+  security_groups = [aws_security_group.db_sg.name]
+
+  tags = {
+    Name = "db.pykesys.com"
+  }
+}
+
+resource "aws_instance" "noc_instance" {
+  ami           = var.noc_ami
+  instance_type = "t2.micro"
+  subnet_id     = aws_subnet.pykesys_subnet.id
+  security_groups = [aws_security_group.noc_sg.name]
+
+  tags = {
+    Name = "noc.pykesys.com"
+  }
+}
+
+# Route 53 Configuration
+resource "aws_route53_record" "app" {
+  zone_id = var.zone_id
+  name    = "app.pykesys.com"
+  type    = "A"
+  ttl     = 300
+  records = [aws_instance.app_instance.public_ip]
+}
+
+resource "aws_route53_record" "db" {
+  zone_id = var.zone_id
+  name    = "db.pykesys.com"
+  type    = "A"
+  ttl     = 300
+  records = [aws_instance.db_instance.public_ip]
+}
+
+resource "aws_route53_record" "noc" {
+  zone_id = var.zone_id
+  name    = "noc.pykesys.com"
+  type    = "A"
+  ttl     = 300
+  records = [aws_instance.noc_instance.public_ip]
+}
+
+resource "aws_route53_record" "redirect" {
+  zone_id = var.zone_id
+  name    = "pykesys.com"
+  type    = "CNAME"
+  ttl     = 300
+  records = ["app.pykesys.com"]
+}
+```
+
+---
+
+### **`variables.tf`**
+```hcl
+variable "app_ami" {}
+variable "db_ami" {}
+variable "noc_ami" {}
+variable "zone_id" {}
+variable "mfa_serial_number" {}
+variable "mfa_code_1" {}
+variable "mfa_code_2" {}
+```
+
+### **`outputs.tf`**
+```hcl
+output "app_instance_ip" {
+  value = aws_instance.app_instance.public_ip
+}
+
+output "db_instance_ip" {
+  value = aws_instance.db_instance.public_ip
+}
+
+output "noc_instance_ip" {
+  value = aws_instance.noc_instance.public_ip
+}
+```
+
+---
+
+Let me know if you'd like further refinements!
+
+
+

@@ -1,0 +1,303 @@
+To modify the original Terraform configuration to deploy **Kubernetes Pods** instead of EC2 instances, we will use **Amazon EKS (Elastic Kubernetes Service)**. Here is how you can adapt the configuration:
+
+### Steps:
+1. **Set up an EKS Cluster**.
+2. **Create Kubernetes Deployments (for WebApp and Database)**.
+3. **Mount the EFS volume** in the Kubernetes Pods using Persistent Volumes and Persistent Volume Claims (PVC).
+4. **Set up Route 53 DNS for WebApp**.
+
+### Key Differences:
+- **EKS** will be used instead of EC2 for Kubernetes Pods.
+- Kubernetes `Deployment` will manage the Pods.
+- **EFS Persistent Volume** and **Persistent Volume Claim** will be used for mounting EFS storage inside Pods.
+
+### Terraform Configuration
+
+```hcl
+provider "aws" {
+  region = "us-east-1" # Adjust region as needed
+}
+
+# 1. Create Route 53 Hosted Zone (for DNS registration)
+resource "aws_route53_zone" "pykesys" {
+  name = "pykesys.com"
+}
+
+# 2. VPC and Subnet Setup (for EKS Cluster)
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+}
+
+resource "aws_subnet" "subnet_1" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "us-east-1a"
+  map_public_ip_on_launch = true
+}
+
+resource "aws_subnet" "subnet_2" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.2.0/24"
+  availability_zone       = "us-east-1b"
+  map_public_ip_on_launch = true
+}
+
+# 3. Security Groups for EKS
+resource "aws_security_group" "eks_security_group" {
+  name_prefix = "eks_sg"
+  vpc_id      = aws_vpc.main.id
+}
+
+# 4. EFS File System Setup
+resource "aws_efs_file_system" "main" {
+  creation_token = "pykesys-efs"
+  performance_mode = "generalPurpose"
+}
+
+resource "aws_efs_mount_target" "webapp_mount" {
+  file_system_id  = aws_efs_file_system.main.id
+  subnet_id       = aws_subnet.subnet_1.id
+  security_groups = [aws_security_group.eks_security_group.id]
+}
+
+resource "aws_efs_mount_target" "db_mount" {
+  file_system_id  = aws_efs_file_system.main.id
+  subnet_id       = aws_subnet.subnet_2.id
+  security_groups = [aws_security_group.eks_security_group.id]
+}
+
+# 5. EKS Cluster Setup
+resource "aws_eks_cluster" "eks_cluster" {
+  name     = "pykesys-cluster"
+  role_arn = aws_iam_role.eks_cluster_role.arn
+  vpc_config {
+    subnet_ids = [aws_subnet.subnet_1.id, aws_subnet.subnet_2.id]
+  }
+
+  depends_on = [
+    aws_security_group.eks_security_group
+  ]
+}
+
+# 6. IAM Role for EKS Cluster
+resource "aws_iam_role" "eks_cluster_role" {
+  name = "eks-cluster-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Principal = {
+          Service = "eks.amazonaws.com"
+        }
+        Effect = "Allow"
+        Sid    = ""
+      },
+    ]
+  })
+}
+
+# 7. IAM Role Policy Attachment for EKS Cluster
+resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+  role       = aws_iam_role.eks_cluster_role.name
+}
+
+# 8. Kubernetes Provider Configuration
+provider "kubernetes" {
+  host                   = aws_eks_cluster.eks_cluster.endpoint
+  cluster_ca_certificate = base64decode(aws_eks_cluster.eks_cluster.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.cluster.token
+}
+
+# 9. Kubernetes Deployment for WebApp (Pod 1)
+resource "kubernetes_deployment" "webapp" {
+  metadata {
+    name      = "webapp-deployment"
+    namespace = "default"
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "webapp"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "webapp"
+        }
+      }
+      spec {
+        container {
+          name  = "webapp-container"
+          image = "nginx:latest"  # Replace with your webapp container image
+          volume_mount {
+            mount_path = "/mnt/efs"
+            name       = "efs-storage"
+          }
+        }
+        volume {
+          name = "efs-storage"
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim.webapp_pvc.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+}
+
+# 10. Kubernetes Deployment for Database (Pod 2)
+resource "kubernetes_deployment" "database" {
+  metadata {
+    name      = "database-deployment"
+    namespace = "default"
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "database"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "database"
+        }
+      }
+      spec {
+        container {
+          name  = "database-container"
+          image = "mysql:5.7"  # Replace with your database container image
+          volume_mount {
+            mount_path = "/mnt/efs"
+            name       = "efs-storage"
+          }
+        }
+        volume {
+          name = "efs-storage"
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim.database_pvc.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+}
+
+# 11. Kubernetes Persistent Volume for EFS
+resource "kubernetes_persistent_volume" "efs_pv" {
+  metadata {
+    name = "efs-pv"
+  }
+
+  spec {
+    capacity = {
+      storage = "5Gi"
+    }
+    volume_mode = "Filesystem"
+    access_modes = ["ReadWriteMany"]
+    persistent_volume_source {
+      nfs {
+        path   = "/"
+        server = aws_efs_file_system.main.dns_name
+      }
+    }
+    storage_class_name = "efs-sc"
+  }
+}
+
+# 12. Kubernetes Persistent Volume Claim for WebApp
+resource "kubernetes_persistent_volume_claim" "webapp_pvc" {
+  metadata {
+    name = "webapp-pvc"
+  }
+
+  spec {
+    access_modes = ["ReadWriteMany"]
+    resources {
+      requests = {
+        storage = "5Gi"
+      }
+    }
+    volume_name = kubernetes_persistent_volume.efs_pv.metadata[0].name
+    storage_class_name = "efs-sc"
+  }
+}
+
+# 13. Kubernetes Persistent Volume Claim for Database
+resource "kubernetes_persistent_volume_claim" "database_pvc" {
+  metadata {
+    name = "database-pvc"
+  }
+
+  spec {
+    access_modes = ["ReadWriteMany"]
+    resources {
+      requests = {
+        storage = "5Gi"
+      }
+    }
+    volume_name = kubernetes_persistent_volume.efs_pv.metadata[0].name
+    storage_class_name = "efs-sc"
+  }
+}
+
+# 14. Route 53 Record for WebApp DNS
+resource "aws_route53_record" "webapp" {
+  zone_id = aws_route53_zone.pykesys.id
+  name    = "webapp.pykesys.com"
+  type    = "A"
+  ttl     = 300
+  records = [aws_eks_cluster.eks_cluster.endpoint]
+}
+
+# Output Kubernetes and EFS Information
+output "webapp_pod_name" {
+  value = kubernetes_deployment.webapp.metadata[0].name
+}
+
+output "database_pod_name" {
+  value = kubernetes_deployment.database.metadata[0].name
+}
+
+output "efs_dns_name" {
+  value = aws_efs_file_system.main.dns_name
+}
+```
+
+### Key Changes in this Configuration:
+
+1. **EKS Cluster**: We set up an EKS cluster using the `aws_eks_cluster` resource.
+2. **Kubernetes Provider**: Configures the `kubernetes` provider to interact with the EKS cluster after it’s created.
+3. **Kubernetes Deployments**: Defines two Kubernetes Deployments, one for the **webapp** and one for the **database**.
+4. **Persistent Volumes (PV) and Persistent Volume Claims (PVC)**:
+   - The EFS volume is mounted to both Pods using Kubernetes **Persistent Volumes** and **Persistent Volume Claims**.
+   - Both WebApp and Database Pods will mount the same EFS volume at `/mnt/efs`.
+5. **Route 53**: We create a DNS record `webapp.pykesys.com` pointing to the EKS endpoint (this assumes the EKS cluster’s API server is publicly accessible).
+
+### Steps to Apply:
+
+1. **Initialize Terraform**:
+   ```bash
+   terraform init
+   ```
+
+2. **Plan**:
+   ```bash
+   terraform plan
+   ```
+
+3. **Apply**:
+   ```bash
+   terraform apply
+   ```
+
+### Considerations:
+
+

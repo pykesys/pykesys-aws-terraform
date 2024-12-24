@@ -1,0 +1,459 @@
+============================
+create a terraform config that deploys the following to AWS:
+
+iam config:
+
+username: pykesys-infra, mfa enabled, this user will be used by terraform to deploy/modify/destroy all aws resources like ec2, efs, ebs, route53, etc. 
+username or role?: pykesys-db-user - used for webapp server to talk to db server 
+username or role?: pykesys-app-user - used to access webapp 
+
+architecture config:
+
+EFS volume named pykesys-vol shared by all EC2 instances defined here:
+
+EC2 instance: webapp.pykesys.com security group will allow traffic for nginx, php
+EC2 instance: db.pykesys.com:  security group will allow traffic for mysql
+EC2 instance: noc.pykesys.com:  security group will allow traffic for openldap, influxdb, grafana, sendmail, postfix
+
+ROUTE53 accept to pykesys.com, 
+and redirect web traffic to server webapp.pykesys.com
+and email traffic to noc.pykesys.com 
+
+--------------------
+
+Here's a complete **Terraform configuration** for the described setup. The solution includes IAM users and roles, EC2 instances, an EFS volume, and Route 53 DNS configuration.
+
+### **Directory Structure**
+```plaintext
+.
+├── main.tf  # Main Terraform configuration file
+├── variables.tf  # Variables for customization
+├── outputs.tf  # Outputs for resources
+```
+
+---
+
+### **`main.tf`**
+```hcl
+provider "aws" {
+  region = "us-east-1"
+}
+
+# IAM Configuration
+
+## User for Terraform operations
+resource "aws_iam_user" "pykesys_infra" {
+  name = "pykesys-infra"
+}
+
+resource "aws_iam_user_policy_attachment" "pykesys_infra_full_access" {
+  user       = aws_iam_user.pykesys_infra.name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
+resource "aws_iam_user_mfa" "pykesys_infra_mfa" {
+  user       = aws_iam_user.pykesys_infra.name
+  serial     = "arn:aws:iam::123456789012:mfa/pykesys-infra"
+}
+
+## Role for Database Access
+resource "aws_iam_role" "pykesys_db_user" {
+  name = "pykesys-db-user"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        },
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_policy" "db_access_policy" {
+  name = "DatabaseAccessPolicy"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "rds:*",
+        ],
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "db_policy_attach" {
+  role       = aws_iam_role.pykesys_db_user.name
+  policy_arn = aws_iam_policy.db_access_policy.arn
+}
+
+## Role for Web Application Access
+resource "aws_iam_role" "pykesys_app_user" {
+  name = "pykesys-app-user"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        },
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_policy" "app_access_policy" {
+  name = "AppAccessPolicy"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "s3:*",
+          "dynamodb:*"
+        ],
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "app_policy_attach" {
+  role       = aws_iam_role.pykesys_app_user.name
+  policy_arn = aws_iam_policy.app_access_policy.arn
+}
+
+# EFS Volume
+resource "aws_efs_file_system" "pykesys_vol" {
+  creation_token = "pykesys-vol"
+  tags = {
+    Name = "pykesys-vol"
+  }
+}
+
+resource "aws_efs_mount_target" "pykesys_vol_mount" {
+  for_each = toset(["subnet-1", "subnet-2", "subnet-3"])
+  file_system_id = aws_efs_file_system.pykesys_vol.id
+  subnet_id      = each.key
+  security_groups = [aws_security_group.efs_sg.id]
+}
+
+resource "aws_security_group" "efs_sg" {
+  name_prefix = "efs-sg"
+  description = "EFS security group"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    from_port   = 2049
+    to_port     = 2049
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# EC2 Instances
+resource "aws_instance" "webapp" {
+  ami           = var.ami_id
+  instance_type = var.instance_type
+  subnet_id     = var.subnet_id
+  tags = {
+    Name = "webapp.pykesys.com"
+  }
+}
+
+resource "aws_instance" "db" {
+  ami           = var.ami_id
+  instance_type = var.instance_type
+  subnet_id     = var.subnet_id
+  tags = {
+    Name = "db.pykesys.com"
+  }
+}
+
+resource "aws_instance" "noc" {
+  ami           = var.ami_id
+  instance_type = var.instance_type
+  subnet_id     = var.subnet_id
+  tags = {
+    Name = "noc.pykesys.com"
+  }
+}
+
+# Route53 Configuration
+resource "aws_route53_zone" "pykesys_com" {
+  name = "pykesys.com"
+}
+
+resource "aws_route53_record" "webapp_redirect" {
+  zone_id = aws_route53_zone.pykesys_com.zone_id
+  name    = "pykesys.com"
+  type    = "CNAME"
+  ttl     = 300
+  records = [aws_instance.webapp.public_dns]
+}
+```
+
+---
+
+### **`variables.tf`**
+```hcl
+variable "ami_id" {
+  description = "AMI ID for the instances"
+}
+
+variable "instance_type" {
+  default     = "t2.micro"
+  description = "Instance type for the EC2 instances"
+}
+
+variable "subnet_id" {
+  description = "Subnet ID for EC2 instances"
+}
+
+variable "vpc_id" {
+  description = "VPC ID for the resources"
+}
+```
+
+---
+
+### **`outputs.tf`**
+```hcl
+output "efs_id" {
+  value = aws_efs_file_system.pykesys_vol.id
+}
+
+output "webapp_public_ip" {
+  value = aws_instance.webapp.public_ip
+}
+
+output "db_public_ip" {
+  value = aws_instance.db.public_ip
+}
+
+output "noc_public_ip" {
+  value = aws_instance.noc.public_ip
+}
+```
+
+---
+
+### **Key Notes**
+1. **IAM for Terraform**:
+   - The `pykesys-infra` user has `AdministratorAccess` for all AWS resources. MFA is enforced.
+
+2. **EFS Shared Volume**:
+   - The EFS volume is shared across subnets and secured with an SG allowing NFS traffic.
+
+3. **IAM Roles for EC2**:
+   - `pykesys-db-user` and `pykesys-app-user` roles allow EC2 instances to interact with databases or other AWS resources securely.
+
+4. **Route 53**:
+   - Configures `pykesys.com` to redirect traffic to the `webapp.pykesys.com` server.
+
+5. **Security**:
+   - Each EC2 instance can be assigned a dedicated SG with tailored rules for additional security.
+
+---
+
+Let me know if you want to refine or expand any part!
+
+==================================
+add anything needed to receive email on noc.pykesys.com
+
+------------------
+To configure the **`noc.pykesys.com`** server to receive email, you need to set up the necessary DNS records, install and configure a mail server (e.g., **Postfix** or **Sendmail**), and ensure security settings (like firewalls and security groups) allow email traffic.
+
+Here's the updated Terraform configuration to include the required DNS records and open ports for email reception:
+
+---
+
+### **Updated `main.tf`**
+
+#### **Security Group for `noc.pykesys.com` (Email Traffic)**
+```hcl
+# Security Group for NOC Server
+resource "aws_security_group" "noc_sg" {
+  name_prefix = "noc-sg"
+  description = "Security group for NOC server"
+  vpc_id      = var.vpc_id
+
+  # Allow SSH
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Allow SMTP for email traffic
+  ingress {
+    from_port   = 25
+    to_port     = 25
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Allow IMAP/IMAPS (optional, if email retrieval is needed)
+  ingress {
+    from_port   = 143
+    to_port     = 143
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 993
+    to_port     = 993
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Allow POP3/POP3S (optional, if email retrieval is needed)
+  ingress {
+    from_port   = 110
+    to_port     = 110
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 995
+    to_port     = 995
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Allow related outbound traffic
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "noc-sg"
+  }
+}
+
+# Attach the NOC Security Group to the NOC Instance
+resource "aws_instance" "noc" {
+  ami           = var.ami_id
+  instance_type = var.instance_type
+  subnet_id     = var.subnet_id
+  security_groups = [
+    aws_security_group.noc_sg.name,
+  ]
+  tags = {
+    Name = "noc.pykesys.com"
+  }
+}
+```
+
+---
+
+#### **Route 53 MX and SPF Records**
+To enable the domain `pykesys.com` to handle email for `noc.pykesys.com`, you need:
+
+1. **MX Record**: Specifies the mail server that receives email for the domain.
+2. **SPF Record**: Allows outgoing email to avoid being flagged as spam.
+3. **A Record**: Maps the `noc.pykesys.com` hostname to its public IP.
+
+```hcl
+# A Record for noc.pykesys.com
+resource "aws_route53_record" "noc_a_record" {
+  zone_id = aws_route53_zone.pykesys_com.zone_id
+  name    = "noc.pykesys.com"
+  type    = "A"
+  ttl     = 300
+  records = [aws_instance.noc.public_ip]
+}
+
+# MX Record for pykesys.com
+resource "aws_route53_record" "pykesys_mx" {
+  zone_id = aws_route53_zone.pykesys_com.zone_id
+  name    = "pykesys.com"
+  type    = "MX"
+  ttl     = 300
+  records = ["10 noc.pykesys.com."]
+}
+
+# SPF Record for pykesys.com
+resource "aws_route53_record" "pykesys_spf" {
+  zone_id = aws_route53_zone.pykesys_com.zone_id
+  name    = "pykesys.com"
+  type    = "TXT"
+  ttl     = 300
+  records = ["v=spf1 a mx ~all"]
+}
+```
+
+---
+
+### **Mail Server Configuration on `noc.pykesys.com`**
+
+After provisioning the `noc` server, install and configure a mail server. For example:
+
+#### **Postfix Installation and Configuration (Ubuntu/CentOS)**
+
+1. **Install Postfix**:
+   ```bash
+   sudo apt update
+   sudo apt install postfix
+   ```
+
+2. **Configure Postfix**:
+   - Select "Internet Site" during setup.
+   - Set `pykesys.com` as the mail domain.
+
+3. **Edit Postfix Configuration**:
+   Update `/etc/postfix/main.cf` with:
+   ```plaintext
+   myhostname = noc.pykesys.com
+   mydomain = pykesys.com
+   myorigin = $mydomain
+   inet_interfaces = all
+   inet_protocols = ipv4
+   mydestination = $myhostname, localhost.$mydomain, localhost
+   relayhost =
+   ```
+
+4. **Restart Postfix**:
+   ```bash
+   sudo systemctl restart postfix
+   ```
+
+---
+
+### **Email Testing**
+1. Test receiving email:
+   ```bash
+   telnet noc.pykesys.com 25
+   ```
+2. Send a test email:
+   ```bash
+   echo "Test Email" | mail -s "Test" your-email@example.com
+   ```
+
+---
+
+### **Summary of Updates**
+1. Added an **MX Record** to Route 53 for email routing.
+2. Added **SPF Record** to reduce email spam issues.
+3. Opened necessary ports in the **NOC Security Group**.
+4. Provided a basic configuration for Postfix as the email server.
+
+Let me know if further adjustments or additional features are needed!
+
+

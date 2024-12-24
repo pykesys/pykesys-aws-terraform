@@ -1,0 +1,296 @@
+In AWS, local disk space for compute instances (such as EC2 instances) is typically managed through different types of **storage volumes**. AWS provides a range of options for attaching and managing disk space to your compute resources, each with different performance characteristics and use cases.
+
+Here’s a breakdown of how AWS handles disk space for local compute resources:
+
+### 1. **Amazon Elastic Block Store (EBS)**
+
+- **EBS Volumes** are the most common and flexible storage option for EC2 instances. These are network-attached persistent storage volumes that can be attached to EC2 instances, and you can dynamically resize them as needed.
+  
+  - **Persistent Storage**: EBS volumes are persistent, meaning data stored on them is retained across instance reboots, terminations (if not deleted), and instance stop/start actions.
+  
+  - **Types of EBS Volumes**: AWS provides several types of EBS volumes that vary in performance and cost:
+    - **General Purpose SSD (gp3/gp2)**: Cost-effective and balanced for most workloads.
+    - **Provisioned IOPS SSD (io2/io1)**: High-performance volumes for I/O-intensive applications.
+    - **Throughput Optimized HDD (st1)**: Low-cost, high-throughput volumes for large, sequential workloads (e.g., big data).
+    - **Cold HDD (sc1)**: Lowest-cost storage for infrequent access.
+
+  - **Performance Characteristics**: EBS volumes are optimized for specific workloads based on the volume type you select. You can control IOPS (input/output operations per second), throughput, and size according to your performance needs.
+
+  - **Snapshots and Backups**: EBS volumes can be backed up using **snapshots**. Snapshots are incremental backups that can be used to restore volumes to previous states or create new volumes.
+
+  - **Mounting**: EBS volumes are attached to EC2 instances over the network, meaning that if you need higher performance, you should select a high-performance EBS type (like `io2` for high IOPS).
+
+  - **Storage Lifecycle**: You can resize an EBS volume or change its performance characteristics while the instance is running, without the need to stop the instance.
+
+#### Example: Attaching an EBS Volume to an EC2 Instance
+When launching an EC2 instance, you can specify an EBS volume that will be automatically attached as the root volume. Additional volumes can also be added during the instance launch or later.
+
+```bash
+aws ec2 run-instances \
+  --image-id ami-12345678 \
+  --instance-type t2.micro \
+  --block-device-mappings "DeviceName=/dev/sda1,Ebs={VolumeSize=8,VolumeType=gp2}"
+```
+
+### 2. **Instance Store (Ephemeral Storage)**
+
+- **Instance Store** is a temporary block storage option that is directly attached to the physical hardware of the EC2 host machine. It is often referred to as **ephemeral storage** because the data stored on it is **not persistent**. When an instance is stopped or terminated, the data on the instance store is lost.
+  
+  - **Performance**: Instance store volumes provide high I/O performance and low latency because they are physically attached to the EC2 host server. However, the storage is **volatile**, meaning you cannot rely on it for permanent data storage.
+  
+  - **Use Cases**: Instance store is often used for **temporary** storage like:
+    - Caching (e.g., temporary data for web applications).
+    - Data that can be recreated easily (e.g., scratch space for computational tasks).
+    - Storing logs that can be discarded periodically.
+
+  - **Availability**: Instance store is only available on certain EC2 instance types that include local storage. Not all instance types provide instance store volumes (e.g., T3 instances do not have instance store).
+  
+  - **Types of Instance Store**: The type of instance store volume depends on the EC2 instance you select. For example:
+    - **NVMe-based Instance Store**: Available on newer instance types like **I3** and **C5d** series. These provide high-performance SSD-backed storage.
+    - **SATA-based Instance Store**: Available on older instance types.
+
+  - **Data Loss on Instance Termination**: If the instance is stopped or terminated, all data on the instance store is **lost**.
+
+#### Example: Instance Store Volumes
+Instance store volumes can be automatically mounted when you select an EC2 instance type that includes instance storage. For example, `i3` instances come with NVMe-based SSD instance storage.
+
+### 3. **Amazon Elastic File System (EFS)**
+
+- **EFS** provides scalable and elastic **file storage** for EC2 instances that can be accessed concurrently from multiple instances, making it a good choice for applications that require shared file systems.
+
+  - **Shared Storage**: EFS is a managed network file system, meaning multiple EC2 instances can mount the same file system and share data.
+  
+  - **Elastic**: EFS automatically scales in capacity as you add or remove files. You don’t need to manually manage capacity.
+
+  - **Persistent**: Data in EFS is stored persistently and is independent of EC2 instance lifecycle events like stopping or terminating instances.
+
+  - **Use Cases**: EFS is ideal for workloads that require a shared file system, such as:
+    - Web applications that require shared data storage between multiple EC2 instances.
+    - Content management and media workflows.
+    - Big data and machine learning storage for datasets.
+
+#### Example: Mounting EFS
+To mount an EFS file system, you first create the file system in the EFS console, then mount it to your EC2 instance using NFS (Network File System):
+
+```bash
+sudo mount -t nfs4 -o nfsvers=4.1 <EFS-DNS-Name>:/ /mnt/efs
+```
+
+### 4. **Amazon FSx**
+
+- **Amazon FSx** provides managed file storage that is optimized for specific workloads. AWS offers two main types of FSx file systems:
+
+  - **Amazon FSx for Windows File Server**: A fully managed Windows file system that is ideal for applications that require Windows file storage, supporting the SMB protocol.
+  - **Amazon FSx for Lustre**: A high-performance file system designed for workloads like big data analytics and machine learning, offering integration with S3 for fast access to data.
+
+  - **Persistent**: Like EFS, FSx provides persistent storage that can survive instance reboots and terminations.
+  - **Shared and Managed**: FSx for Windows allows you to share data among EC2 instances, and FSx for Lustre is tailored for high-performance computing.
+
+### 5. **AWS Local NVMe Storage (on EC2 Instances)**
+
+AWS provides **local NVMe-based storage** for certain EC2 instance types. This is physical storage directly attached to the EC2 host and is particularly useful for high-performance, low-latency applications.
+
+- **NVMe** (Non-Volatile Memory Express) provides extremely fast storage and is ideal for high-performance applications like:
+  - Big Data Analytics.
+  - High-performance databases (e.g., SQL, NoSQL).
+  - Temporary data storage for computations.
+  
+- **Ephemeral**: Just like instance store volumes, local NVMe storage is **ephemeral**. Data will be lost if the instance is stopped or terminated.
+
+#### Example: EC2 Instance with NVMe
+For example, `i3` and `i3en` instances come with local NVMe SSD storage.
+
+### Summary of AWS Disk Space Options:
+
+| **Option**              | **Type**                  | **Persistence**      | **Use Case**                                  |
+|-------------------------|---------------------------|----------------------|-----------------------------------------------|
+| **EBS (Elastic Block Store)** | Block Storage              | Persistent           | General-purpose storage, databases, backups. |
+| **Instance Store**      | Block Storage              | Ephemeral            | Temporary storage, caching, scratch space.    |
+| **EFS (Elastic File System)** | File Storage              | Persistent           | Shared file storage across multiple instances. |
+| **FSx**                 | File Storage              | Persistent           | Windows file systems, Lustre for HPC workloads.|
+| **NVMe Instance Store** | Block Storage              | Ephemeral            | High-performance, low-latency, temporary storage. |
+
+Each of these options offers different performance, persistence, and cost characteristics, so you should choose the appropriate one depending on your application's needs.
+
+Let me know if you need more details on a specific type of disk storage or need help choosing the right option!
+
+==================
+
+The cost of AWS storage options depends on the type of storage you're using, the amount of data you're storing, and the performance characteristics (such as IOPS or throughput). Below is an overview of the pricing for the most commonly used AWS storage options:
+
+### 1. **Amazon Elastic Block Store (EBS) Pricing**
+
+Amazon EBS provides block-level storage volumes that can be attached to EC2 instances. The pricing is based on several factors such as the volume type, size, IOPS (for provisioned IOPS SSD), and data transfer.
+
+#### **EBS Volume Types:**
+
+- **General Purpose SSD (gp3 and gp2)**:
+  - **gp3**:
+    - **Storage**: $0.08 per GB per month.
+    - **IOPS**: 3,000 IOPS included by default, with $0.005 per provisioned IOPS beyond the 3,000.
+    - **Throughput**: 125 MB/s included, with additional throughput costing $0.04 per MB/s per month.
+  
+  - **gp2**:
+    - **Storage**: $0.10 per GB per month.
+    - **IOPS**: Automatically provisioned, depending on the volume size (up to 16,000 IOPS for 16 TiB).
+    - **Throughput**: Maximum throughput of 250 MB/s for 16 TiB volumes.
+  
+  - **Use Case**: General-purpose workloads that require a balance of price and performance.
+
+- **Provisioned IOPS SSD (io2 and io1)**:
+  - **io2**:
+    - **Storage**: $0.125 per GB per month.
+    - **IOPS**: $0.065 per IOPS per month.
+  
+  - **io1**:
+    - **Storage**: $0.125 per GB per month.
+    - **IOPS**: $0.10 per IOPS per month.
+  
+  - **Use Case**: High-performance workloads such as databases that require high IOPS.
+
+- **Throughput Optimized HDD (st1)**:
+  - **Storage**: $0.045 per GB per month.
+  - **Throughput**: 500 MB/s per volume.
+  
+  - **Use Case**: Large, sequential workloads like big data and log processing.
+
+- **Cold HDD (sc1)**:
+  - **Storage**: $0.025 per GB per month.
+  - **Throughput**: 250 MB/s per volume.
+  
+  - **Use Case**: Infrequent access workloads like archival storage.
+
+#### **EBS Snapshot Pricing**:
+- **Snapshots** are incremental backups, so you pay for the data you store in snapshots.
+  - **$0.05 per GB per month** for EBS snapshots.
+
+#### **Data Transfer Cost**:
+- Data transfer **within the same Availability Zone** is free.
+- **Data transfer across AZs** or **to/from the internet** incurs additional costs.
+
+**Example Pricing**:
+- A 100 GB **gp3** EBS volume:  
+  - Storage: 100 GB * $0.08 = $8.00/month.
+  - Provisioned IOPS (e.g., 3,000 IOPS): 3,000 * $0.005 = $15.00/month.
+
+---
+
+### 2. **Instance Store (Ephemeral Storage) Pricing**
+
+- **Instance Store** is **free** as part of the EC2 instance. However, it is important to note that the storage is temporary, and the data is lost if the instance is stopped, terminated, or fails.
+- **Costs**: You only pay for the EC2 instance itself; the instance store volumes are included in the instance pricing. The storage cost is **not separately billed**.
+
+**Example Instance Store** Pricing:
+- An **i3.large** EC2 instance (which comes with 1 × 375 GB NVMe SSD instance store) has a cost for the EC2 instance itself:
+  - **On-Demand Cost**: $0.126 per hour (as of December 2024).
+  - **Instance Store**: Free, but the storage is ephemeral and not billed separately.
+
+---
+
+### 3. **Amazon Elastic File System (EFS) Pricing**
+
+Amazon EFS provides scalable file storage for multiple EC2 instances. Pricing is based on the storage amount used and the performance mode you select.
+
+- **Standard Storage**:  
+  - **Storage Cost**: $0.30 per GB per month (for general-purpose usage).
+  
+- **Infrequent Access Storage**:  
+  - **Storage Cost**: $0.025 per GB per month (for data that is infrequently accessed, EFS moves data to IA when it is not accessed for 30 days).
+
+- **Request Charges**:
+  - **Standard Requests**: $0.01 per 1,000 requests.
+  - **Infrequent Access Requests**: $0.025 per 1,000 requests.
+
+- **Data Transfer**:
+  - **Within the Same Region**: Free.
+  - **To Another Region**: Costs depend on the transfer size.
+
+- **Performance Modes**:
+  - **General Purpose** (default): Suitable for most use cases.
+  - **Max I/O**: For applications requiring high throughput and low latency, but this mode may have higher costs for requests.
+
+**Example Pricing**:
+- Storing **100 GB** of data in **Standard Storage**:  
+  - 100 GB * $0.30 = $30/month.
+
+- Storing **100 GB** in **Infrequent Access**:  
+  - 100 GB * $0.025 = $2.50/month.
+
+---
+
+### 4. **Amazon FSx Pricing**
+
+AWS offers two types of Amazon FSx services: **FSx for Windows File Server** and **FSx for Lustre**. Both have different pricing models depending on the type of storage and the features used.
+
+#### **FSx for Windows File Server**:
+- **Storage Cost**:
+  - $0.12 per GB per month for **SSD storage**.
+  - $0.08 per GB per month for **HDD storage**.
+  
+- **Backup Storage**:
+  - **$0.09 per GB per month** for backups.
+
+- **Data Transfer**:
+  - Free **within the same region**.
+  - Data transfer across regions is charged based on the region and the amount transferred.
+
+#### **FSx for Lustre**:
+- **Storage Cost**:
+  - **SSD**: $0.135 per GB per month.
+  - **HDD**: $0.070 per GB per month.
+  
+- **Throughput**: 
+  - Charges are based on the throughput you provision.
+  - **$0.30 per MB/s per month** for provisioned throughput.
+
+- **Data Transfer**:  
+  - Similar to EFS, **within the same region** is free.
+  - Cross-region transfer costs apply.
+
+**Example FSx for Windows Pricing**:
+- **100 GB** of SSD storage:  
+  - 100 GB * $0.12 = $12/month.
+
+---
+
+### 5. **Amazon Local NVMe Storage (Instance Store for EC2)**
+
+For EC2 instances with **NVMe-based storage** (such as `i3`, `m5d`, `c5d` instances), the cost of storage is included in the price of the EC2 instance. **NVMe instance storage** is ephemeral, meaning it’s not billed separately.
+
+- **Example EC2 Pricing (with NVMe)**:
+  - For an `i3.large` instance (with **375 GB NVMe SSD storage**):
+    - **On-Demand Cost**: $0.126 per hour (EC2 instance cost).
+    - **Storage**: Free, but ephemeral (data lost on instance stop/termination).
+
+---
+
+### 6. **Amazon S3 (Simple Storage Service) Pricing (for Archival or Object Storage)**
+
+While S3 is primarily an **object storage service**, it’s often used in conjunction with other AWS storage options for backups and archiving. Prices vary by storage class.
+
+#### **Standard Storage**:
+- **$0.023 per GB per month**.
+
+#### **Infrequent Access Storage**:
+- **$0.0125 per GB per month**.
+
+#### **Glacier (Archival)**:
+- **$0.004 per GB per month** (for long-term archival storage).
+
+#### **Data Transfer Costs**:
+- **Uploads** to S3 are free.
+- **Data retrieval** from Glacier has a retrieval fee, based on the retrieval speed and data size.
+
+---
+
+### Summary of Storage Costs:
+
+| **Storage Type**                | **Cost**                                    | **Use Case**                                 |
+|----------------------------------|---------------------------------------------|----------------------------------------------|
+| **EBS (gp3)**                    | $0.08 per GB per month                      | General-purpose storage with moderate IOPS.  |
+| **EBS (io2)**                    | $0.125 per GB per month, $0.065 per IOPS    | High-performance I/O for databases.          |
+| **EBS (st1)**                    | $0.045 per GB per month                     | Big data, log processing, large sequential workloads. |
+| **EBS (sc1)**                    | $0.025 per GB per month                     | Infrequent access data, archival storage.   |
+| **Instance Store**               | Free with EC2 instance (ephemeral)          | Temporary, high-performance, low-latency storage. |
+| **EFS (Standard)**               | $0.30 per GB per month                      | Shared file storage across EC2 instances.   |
+| **FSx for Windows**              | $
