@@ -1,0 +1,260 @@
+Creating a **VPC (Virtual Private Cloud)** in AWS using **Terraform** involves defining several components such as subnets, routing tables, and security groups. Below is a simple example of a Terraform configuration that sets up a VPC with:
+
+- A **public subnet**.
+- A **private subnet**.
+- **Internet Gateway** for public access.
+- **Route tables** to route traffic between subnets.
+- **Security Groups** for controlling inbound and outbound traffic.
+
+### Sample Terraform Configuration: VPC, Subnets, Routing Tables, and Security Groups
+
+#### 1. **Provider Configuration** (`provider.tf`)
+
+This section defines the provider (AWS) and the region where resources will be created.
+
+```hcl
+provider "aws" {
+  region = "us-west-2"  # Change this to your preferred AWS region
+}
+```
+
+#### 2. **VPC Definition** (`vpc.tf`)
+
+This section creates the VPC.
+
+```hcl
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+  enable_dns_support = true
+  enable_dns_hostnames = true
+  tags = {
+    Name = "Main-VPC"
+  }
+}
+```
+
+#### 3. **Internet Gateway** (`internet-gateway.tf`)
+
+The **Internet Gateway** will be attached to the VPC, allowing public access to resources in the public subnet.
+
+```hcl
+resource "aws_internet_gateway" "main" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "Main-Internet-Gateway"
+  }
+}
+```
+
+#### 4. **Subnets (Public and Private)** (`subnets.tf`)
+
+We create two subnets: a **public subnet** (with public IPs) and a **private subnet**.
+
+```hcl
+resource "aws_subnet" "public" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "us-west-2a"  # Adjust to your preferred availability zone
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "Public-Subnet"
+  }
+}
+
+resource "aws_subnet" "private" {
+  vpc_id                = aws_vpc.main.id
+  cidr_block            = "10.0.2.0/24"
+  availability_zone     = "us-west-2a"  # Adjust to your preferred availability zone
+  map_public_ip_on_launch = false
+
+  tags = {
+    Name = "Private-Subnet"
+  }
+}
+```
+
+#### 5. **Route Table for Public Subnet** (`route-table-public.tf`)
+
+We define a **route table** for the **public subnet**, which allows traffic to reach the internet via the **Internet Gateway**.
+
+```hcl
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
+  }
+
+  tags = {
+    Name = "Public-Route-Table"
+  }
+}
+
+resource "aws_route_table_association" "public_association" {
+  subnet_id      = aws_subnet.public.id
+  route_table_id = aws_route_table.public.id
+}
+```
+
+#### 6. **Route Table for Private Subnet** (`route-table-private.tf`)
+
+For the **private subnet**, the routing table won’t have a direct route to the internet. Private subnets can be used for backend services that don't need direct internet access.
+
+```hcl
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "Private-Route-Table"
+  }
+}
+
+resource "aws_route_table_association" "private_association" {
+  subnet_id      = aws_subnet.private.id
+  route_table_id = aws_route_table.private.id
+}
+```
+
+#### 7. **Security Groups** (`security-group.tf`)
+
+We define two security groups: one for the **public subnet** (which allows HTTP, HTTPS, and SSH) and another for the **private subnet** (which allows access only from the public subnet or other internal resources).
+
+```hcl
+# Security Group for Public Subnet (allow HTTP, HTTPS, and SSH)
+resource "aws_security_group" "public_sg" {
+  vpc_id = aws_vpc.main.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"  # Allow all outbound traffic
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "Public-Security-Group"
+  }
+}
+
+# Security Group for Private Subnet (only allow internal traffic from Public Subnet)
+resource "aws_security_group" "private_sg" {
+  vpc_id = aws_vpc.main.id
+
+  ingress {
+    from_port   = 0
+    to_port     = 65535
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.1.0/24"]  # Allow traffic from public subnet (10.0.1.0/24)
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"  # Allow all outbound traffic
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "Private-Security-Group"
+  }
+}
+```
+
+#### 8. **Outputs** (`outputs.tf`)
+
+You can output the details of the VPC, subnets, and security groups for reference.
+
+```hcl
+output "vpc_id" {
+  value = aws_vpc.main.id
+}
+
+output "public_subnet_id" {
+  value = aws_subnet.public.id
+}
+
+output "private_subnet_id" {
+  value = aws_subnet.private.id
+}
+
+output "public_security_group_id" {
+  value = aws_security_group.public_sg.id
+}
+
+output "private_security_group_id" {
+  value = aws_security_group.private_sg.id
+}
+```
+
+---
+
+### Explanation of Resources:
+
+1. **VPC (`aws_vpc`)**: A VPC with CIDR block `10.0.0.0/16` is created. This will allow up to 65,536 IP addresses.
+   
+2. **Subnets (`aws_subnet`)**:
+   - **Public Subnet** (`10.0.1.0/24`) allows for instances with public IPs.
+   - **Private Subnet** (`10.0.2.0/24`) does not allow direct access from the internet.
+   
+3. **Internet Gateway (`aws_internet_gateway`)**: Provides internet access for resources in the public subnet.
+   
+4. **Route Tables (`aws_route_table`)**: 
+   - The **public route table** routes all traffic to the internet via the Internet Gateway.
+   - The **private route table** does not have any internet routes.
+   
+5. **Security Groups (`aws_security_group`)**:
+   - **Public Security Group** allows SSH, HTTP, and HTTPS traffic from any IP (`0.0.0.0/0`).
+   - **Private Security Group** allows internal traffic from the public subnet.
+
+---
+
+### Applying the Terraform Configuration:
+
+Once you have your configuration files ready, you can follow these steps:
+
+1. **Initialize Terraform**:
+   ```bash
+   terraform init
+   ```
+
+2. **Plan the Deployment**:
+   ```bash
+   terraform plan
+   ```
+
+3. **Apply the Configuration**:
+   ```bash
+   terraform apply
+   ```
+
+4. **Verify**: After applying the configuration, you should see the created VPC, subnets, security groups, and route tables in your AWS console.
+
+---
+
+This configuration is a simplified VPC setup with public and private subnets. Depending on your needs, you can expand this to include NAT Gateways, VPNs, or Direct Connect for private network connectivity, or more complex routing for hybrid environments.
+
+
