@@ -1,0 +1,79 @@
+# Terraform to deploy a tiny EC2 instance with Route53 record for pykesys.com
+
+provider "aws" {
+  region = "us-west-2" # change to your preferred region
+}
+
+variable "domain_name" {
+  default = "pykesys.com"
+}
+
+# Get existing hosted zone
+data "aws_route53_zone" "main" {
+  name         = var.domain_name
+  private_zone = false
+}
+
+# Key pair (expects your public key is available locally)
+resource "aws_key_pair" "pykesys_key" {
+  key_name   = "pykesys-key"
+  public_key = file("~/.ssh/id_rsa.pub")
+}
+
+# Security Group
+resource "aws_security_group" "pykesys_sg" {
+  name        = "pykesys-sg"
+  description = "Allow SSH and HTTP"
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# EC2 Instance
+resource "aws_instance" "pykesys_ec2" {
+  ami           = "ami-0c02fb55956c7d316" # Amazon Linux 2 AMI (us-west-2)
+  instance_type = "t2.micro"
+  key_name      = aws_key_pair.pykesys_key.key_name
+  security_groups = [aws_security_group.pykesys_sg.name]
+
+  tags = {
+    Name = "pykesys-instance"
+  }
+}
+
+# Route53 A Record
+resource "aws_route53_record" "pykesys_dns" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = var.domain_name
+  type    = "A"
+  ttl     = 300
+  records = [aws_instance.pykesys_ec2.public_ip]
+}
+
+output "instance_ip" {
+  value = aws_instance.pykesys_ec2.public_ip
+}
+
+output "ssh_command" {
+  value = "ssh ec2-user@${aws_instance.pykesys_ec2.public_ip}"
+}
+
+

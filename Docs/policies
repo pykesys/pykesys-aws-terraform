@@ -1,0 +1,61 @@
+AIOpsConsoleAdminPolicy
+AWS managed
+None
+Grants full access to Amazon AI Operations service and its required permissions via AWS console. It also includes permissions to use identity-aware console sessions.
+AIOpsOperatorAccess
+AWS managed
+None
+Grants access to the Amazon AI Operations APIs for creating, updating, and deleting investigations, investigation events, and investigation resources. It also includes ReadOnly access to all AI Operations APIs and to use identity-aware sessions.
+AIOpsReadOnlyAccess
+AWS managed
+None
+Grants ReadOnly permissions to the Amazon AI Operations service and its required resources.
+AlexaForBusinessDeviceSetup
+AWS managed
+None
+Provide device setup access to AlexaForBusiness services
+AlexaForBusinessFullAccess
+AWS managed
+None
+Grants full access to AlexaForBusiness resources and access to related AWS Services
+AlexaForBusinessGatewayExecution
+AWS managed
+None
+Provide gateway execution access to AlexaForBusiness services
+AlexaForBusinessLifesizeDelegatedAccessPolicy
+AWS managed
+None
+Provide access to Lifesize AVS devices
+AlexaForBusinessNetworkProfileServicePolicy
+AWS managed
+None
+This policy enables Alexa for Business to perform automated tasks scheduled by your network profiles.
+AlexaForBusinessPolyDelegatedAccessPolicy
+AWS managed
+None
+Provide access to Poly AVS devices
+AlexaForBusinessReadOnlyAccess
+AWS managed
+None
+Provide read only access to AlexaForBusiness services
+AmazonAPIGatewayAdministrator
+AWS managed
+None
+Provides full access to create/edit/delete APIs in Amazon API Gateway via the AWS Management Console.
+AmazonAPIGatewayInvokeFullAccess
+AWS managed
+None
+Provides full access to invoke APIs in Amazon API Gateway.
+AmazonAPIGatewayPushToCloudWatchLogs
+AWS managed
+None
+Allows API Gateway to push logs to user's account.
+AmazonAppFlowFullAccess
+AWS managed
+None
+Provides full access to Amazon AppFlow and access to AWS services supported as flow source or destination (S3 and Redshift). Also provides access to KMS for encryption
+AmazonAppFlowReadOnlyAccess
+AWS managed
+None
+Provides read only access to Amazon Appflow flows
+
