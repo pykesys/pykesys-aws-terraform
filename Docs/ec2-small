@@ -1,0 +1,910 @@
+im learning how to deploy to AWS with terraform first since thats what most people use. I have an user "pykesys@gmail.com" with a password. Can you give terraform to deploy/destroy a single tiny EC2 instance with a route53 of pykesys.com?
+
+-----------------
+
+# Terraform to deploy a tiny EC2 instance with Route53 record for pykesys.com
+
+provider "aws" {
+  region = "us-west-2" # change to your preferred region
+}
+
+variable "domain_name" {
+  default = "pykesys.com"
+}
+
+# Get existing hosted zone
+data "aws_route53_zone" "main" {
+  name         = var.domain_name
+  private_zone = false
+}
+
+# Key pair (expects your public key is available locally)
+resource "aws_key_pair" "pykesys_key" {
+  key_name   = "pykesys-key"
+  public_key = file("~/.ssh/id_rsa.pub")
+}
+
+# Security Group
+resource "aws_security_group" "pykesys_sg" {
+  name        = "pykesys-sg"
+  description = "Allow SSH and HTTP"
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# EC2 Instance
+resource "aws_instance" "pykesys_ec2" {
+  ami           = "ami-0c02fb55956c7d316" # Amazon Linux 2 AMI (us-west-2)
+  instance_type = "t2.micro"
+  key_name      = aws_key_pair.pykesys_key.key_name
+  security_groups = [aws_security_group.pykesys_sg.name]
+
+  tags = {
+    Name = "pykesys-instance"
+  }
+}
+
+# Route53 A Record
+resource "aws_route53_record" "pykesys_dns" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = var.domain_name
+  type    = "A"
+  ttl     = 300
+  records = [aws_instance.pykesys_ec2.public_ip]
+}
+
+output "instance_ip" {
+  value = aws_instance.pykesys_ec2.public_ip
+}
+
+output "ssh_command" {
+  value = "ssh ec2-user@${aws_instance.pykesys_ec2.public_ip}"
+}
+
+
+------------------
+
+Here is your complete Terraform configuration to:
+
+- Deploy a tiny **Amazon EC2 instance** (`t2.micro`)
+- Assign it a **Route 53 A record** (`pykesys.com`)
+- Use your local `~/.ssh/id_rsa.pub` as the key for access
+
+🧩 Assumptions:
+- You already have a **Route53 hosted zone for pykesys.com**
+- Your **public SSH key** is saved at `~/.ssh/id_rsa.pub`
+- You’re deploying to **`us-west-2`** (feel free to change)
+
+Would you like:
+- A zip of this config to test locally?
+- Help setting up `terraform.tfvars` and `.tfbackend`?
+- A destroy version or automation script (`make destroy`, `make apply`)?
+
+------------------
+
+give backgourd info to Help setting up terraform.tfvars and .tfbackend
+
+------------------
+
+🧪 1. terraform.tfvars – For Defining Variables
+🔍 What it is:
+A file that provides values for variables declared in your *.tf files. This allows you to keep your code clean and your secrets out of version control (when used properly).
+
+📦 Example terraform.tfvars
+
+region        = "us-west-2"
+domain_name   = "pykesys.com"
+public_key    = file("~/.ssh/id_rsa.pub")
+
+
+You would then modify your main.tf or other .tf files to use:
+
+variable "region" {}
+variable "domain_name" {}
+variable "public_key" {}
+
+
+
+💾 2. terraform.tfbackend – For Remote State Storage (Optional, but important)
+🔍 What it is:
+Defines how and where Terraform stores its state file. Remote state enables team collaboration, locking, and backup — usually via an S3 bucket for AWS.
+
+📦 Example terraform.tfbackend
+
+bucket         = "pykesys-terraform-state"
+key            = "ec2/pykesys-instance.tfstate"
+region         = "us-west-2"
+dynamodb_table = "pykesys-terraform-locks"
+encrypt        = true
+
+Then, in your code:
+
+terraform {
+  backend "s3" {}
+}
+
+
+And run:
+
+terraform init -backend-config="terraform.tfbackend"
+
+
+✅ Summary Table
+
+File	Purpose	Sensitive Info?	Checked into Git?
+terraform.tfvars	Provides values for declared variables	Maybe	❌ (use *.tfvars.example)
+terraform.tfbackend	Defines backend for storing .tfstate	Yes	❌ (never)
+📁 Recommended Structure
+
+pykesys-aws-deploy/
+├── main.tf
+├── variables.tf
+├── terraform.tfvars        # or terraform.tfvars.example
+├── terraform.tfbackend     # contains S3 backend info
+├── outputs.tf
+└── README.md
+
+
+Would you like me to generate:
+
+A ready-to-use zip with this layout?
+
+A variables.tf file for your current project?
+
+Or configure the backend with an actual S3 bucket and DynamoDB lock table script?
+
+
+
+
+
+
+You said:
+create a ready-to-use zip with this layout and populate the files with the current project
+
+import os
+import zipfile
+
+# Define base directory
+base_dir = "/mnt/data/pykesys-aws-deploy"
+os.makedirs(base_dir, exist_ok=True)
+
+# Define file contents
+main_tf = """\
+provider "aws" {
+  region = var.region
+}
+
+data "aws_route53_zone" "main" {
+  name         = var.domain_name
+  private_zone = false
+}
+
+resource "aws_key_pair" "pykesys_key" {
+  key_name   = "pykesys-key"
+  public_key = var.public_key
+}
+
+resource "aws_security_group" "pykesys_sg" {
+  name        = "pykesys-sg"
+  description = "Allow SSH and HTTP"
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_instance" "pykesys_ec2" {
+  ami           = "ami-0c02fb55956c7d316"
+  instance_type = "t2.micro"
+  key_name      = aws_key_pair.pykesys_key.key_name
+  security_groups = [aws_security_group.pykesys_sg.name]
+
+  tags = {
+    Name = "pykesys-instance"
+  }
+}
+
+resource "aws_route53_record" "pykesys_dns" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = var.domain_name
+  type    = "A"
+  ttl     = 300
+  records = [aws_instance.pykesys_ec2.public_ip]
+}
+"""
+
+variables_tf = """\
+variable "region" {
+  description = "AWS region"
+  type        = string
+}
+
+variable "domain_name" {
+  description = "The root domain name"
+  type        = string
+}
+
+variable "public_key" {
+  description = "SSH public key for instance access"
+  type        = string
+}
+"""
+
+outputs_tf = """\
+output "instance_ip" {
+  value = aws_instance.pykesys_ec2.public_ip
+}
+
+output "ssh_command" {
+  value = "ssh ec2-user@${aws_instance.pykesys_ec2.public_ip}"
+}
+"""
+
+tfvars_example = """\
+region      = "us-west-2"
+domain_name = "pykesys.com"
+public_key  = file("~/.ssh/id_rsa.pub")
+"""
+
+tfbackend = """\
+bucket         = "pykesys-terraform-state"
+key            = "ec2/pykesys-instance.tfstate"
+region         = "us-west-2"
+dynamodb_table = "pykesys-terraform-locks"
+encrypt        = true
+"""
+
+# Write all files
+files = {
+    "main.tf": main_tf,
+    "variables.tf": variables_tf,
+    "outputs.tf": outputs_tf,
+    "terraform.tfvars.example": tfvars_example,
+    "terraform.tfbackend": tfbackend
+}
+
+for filename, content in files.items():
+    with open(os.path.join(base_dir, filename), "w") as f:
+        f.write(content)
+
+# Zip the directory
+zip_path = "/mnt/data/pykesys-aws-deploy.zip"
+with zipfile.ZipFile(zip_path, "w") as zipf:
+    for root, _, filenames in os.walk(base_dir):
+        for filename in filenames:
+            full_path = os.path.join(root, filename)
+            arcname = os.path.relpath(full_path, base_dir)
+            zipf.write(full_path, arcname)
+
+zip_path
+
+------------
+import os
+import zipfile
+
+# Recreate directory structure
+base_dir = "/mnt/data/pykesys-aws-deploy"
+os.makedirs(base_dir, exist_ok=True)
+
+# Define file contents again
+main_tf = """\
+provider "aws" {
+  region = var.region
+}
+
+data "aws_route53_zone" "main" {
+  name         = var.domain_name
+  private_zone = false
+}
+
+resource "aws_key_pair" "pykesys_key" {
+  key_name   = "pykesys-key"
+  public_key = var.public_key
+}
+
+resource "aws_security_group" "pykesys_sg" {
+  name        = "pykesys-sg"
+  description = "Allow SSH and HTTP"
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_instance" "pykesys_ec2" {
+  ami           = "ami-0c02fb55956c7d316"
+  instance_type = "t2.micro"
+  key_name      = aws_key_pair.pykesys_key.key_name
+  security_groups = [aws_security_group.pykesys_sg.name]
+
+  tags = {
+    Name = "pykesys-instance"
+  }
+}
+
+resource "aws_route53_record" "pykesys_dns" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = var.domain_name
+  type    = "A"
+  ttl     = 300
+  records = [aws_instance.pykesys_ec2.public_ip]
+}
+"""
+
+variables_tf = """\
+variable "region" {
+  description = "AWS region"
+  type        = string
+}
+
+variable "domain_name" {
+  description = "The root domain name"
+  type        = string
+}
+
+variable "public_key" {
+  description = "SSH public key for instance access"
+  type        = string
+}
+"""
+
+outputs_tf = """\
+output "instance_ip" {
+  value = aws_instance.pykesys_ec2.public_ip
+}
+
+output "ssh_command" {
+  value = "ssh ec2-user@${aws_instance.pykesys_ec2.public_ip}"
+}
+"""
+
+tfvars_example = """\
+region      = "us-west-2"
+domain_name = "pykesys.com"
+public_key  = file("~/.ssh/id_rsa.pub")
+"""
+
+tfbackend = """\
+bucket         = "pykesys-terraform-state"
+key            = "ec2/pykesys-instance.tfstate"
+region         = "us-west-2"
+dynamodb_table = "pykesys-terraform-locks"
+encrypt        = true
+"""
+
+# Save the files
+files = {
+    "main.tf": main_tf,
+    "variables.tf": variables_tf,
+    "outputs.tf": outputs_tf,
+    "terraform.tfvars.example": tfvars_example,
+    "terraform.tfbackend": tfbackend
+}
+
+for filename, content in files.items():
+    with open(os.path.join(base_dir, filename), "w") as f:
+        f.write(content)
+
+# Zip it
+zip_path = "/mnt/data/pykesys-aws-deploy.zip"
+with zipfile.ZipFile(zip_path, "w") as zipf:
+    for folder, _, files in os.walk(base_dir):
+        for file in files:
+            full_path = os.path.join(folder, file)
+            zipf.write(full_path, os.path.relpath(full_path, base_dir))
+
+zip_path
+
+--------------------
+
+Here is your ready-to-use Terraform deployment project for AWS:
+
+📦 Download pykesys-aws-deploy.zip
+
+It includes:
+
+main.tf (EC2 + Route53)
+
+variables.tf (inputs for region, domain, key)
+
+outputs.tf (IP + SSH command)
+
+terraform.tfvars.example (sample config)
+
+terraform.tfbackend (for optional S3/DynamoDB state)
+
+Let me know if you want help:
+
+Creating the backend bucket/table
+
+Automating SSH or setup scripts
+
+Adding SSL/TLS via ACM + ALB
+
+You're deploying like a pro now. 🛠️🔥 ​​
+
+
+
+
+
+
+You said:
+can you guess how much the monthly cost would be to maintain a small web server in aws? like the small ec2 instance we are working on
+
+Yes! I can give you a solid estimate of the monthly AWS cost to run a small web server using the setup we're working on (a t2.micro EC2 instance, public IP, Route53).
+
+Let’s break it down:
+
+💰 Estimated Monthly Cost (USD)
+
+Resource	Type/Size	Estimated Cost / Month	Notes
+EC2 Instance	t2.micro	$8.47	750 hours/month, on-demand in us-west-2
+EBS Volume (root disk)	8 GB gp3	~$0.80	$0.10 per GB
+Elastic IP	1 address	$0.00 (if used)	Only free if assigned to a running instance
+Route53 Hosted Zone	1 zone	$0.50	$0.50 per zone/month
+Route53 A Record	1 record	~$0.00	1st 10,000 records free
+Data Transfer Out	~1–2 GB	~$0.18–0.36	$0.09 per GB (1 GB free per month)
+
+🆓 If You're Eligible for AWS Free Tier
+If your AWS account is less than 12 months old, you can get:
+
+750 hours/month of t2.micro free
+
+30 GB of EBS
+
+15 GB data transfer out
+
+🎉 Total Monthly Cost with Free Tier: $0
+
+Would you like:
+
+A breakdown for a production-grade setup (e.g. t3.medium, ALB, RDS)?
+
+A monthly budget alarm with Terraform?
+
+Or a cost-optimizer script?
+
+
+
+
+
+
+You said:
+please give all 3 options
+
+Absolutely! Let’s go all-in and give you:
+
+---
+
+## ✅ 1. **Production-Grade Setup Cost Estimate (e.g. t3.medium, ALB, RDS)**
+
+| Resource                    | Type/Size         | Est. Monthly Cost (USD) | Notes |
+|-----------------------------|-------------------|---------------------------|-------|
+| **EC2 Instance**            | `t3.medium`       | ~$29.44                   | 750 hrs @ ~$0.039/h |
+| **EBS Volume**              | 20 GB gp3         | ~$2.00                    | $0.10 per GB |
+| **Application Load Balancer (ALB)** | 1 ALB | ~$18.00                   | $0.025/hr + LCU charges |
+| **RDS Instance** (Postgres) | `db.t3.micro`     | ~$15.00                   | On-demand | 20 GB included |
+| **Route53 Hosted Zone**     | 1 zone            | $0.50                     | flat |
+| **Data Transfer (5 GB)**    | EC2 + ALB         | ~$0.45                    | $0.09/GB beyond 1 free GB |
+
+### 💰 Total: **~$65–70/month**
+
+This is a **realistic starter prod setup**: web server behind an ALB, small RDS database, custom domain, and DNS.
+
+---
+
+## 🚨 2. **Terraform Budget Alarm**
+
+You can set a **CloudWatch Billing Alarm** to notify you when AWS usage charges exceed a threshold.
+
+### 📄 Terraform for AWS Budget Alarm:
+
+```hcl
+resource "aws_budgets_budget" "monthly_budget" {
+  name              = "MonthlyBudget"
+  budget_type       = "COST"
+  limit_amount      = "15"
+  limit_unit        = "USD"
+  time_unit         = "MONTHLY"
+
+  cost_filters = {
+    Service = "AmazonEC2"
+  }
+
+  notification {
+    comparison_operator = "GREATER_THAN"
+    notification_type   = "ACTUAL"
+    threshold           = 80
+    threshold_type      = "PERCENTAGE"
+
+    subscriber {
+      address          = "your-email@example.com"
+      subscription_type = "EMAIL"
+    }
+  }
+}
+```
+
+> ⚠️ Make sure to **verify your email** after the alarm is created via AWS console.
+
+---
+
+## 🧠 3. **Cost Optimizer Script (Python with Boto3)**
+
+A Python script that lists your EC2 instances, volumes, IPs, and monthly cost estimate:
+
+```python
+import boto3
+
+ec2 = boto3.client('ec2')
+pricing = boto3.client('pricing', region_name='us-east-1')  # Only available in us-east-1
+
+def get_instance_prices(region="US West (Oregon)", instance_type="t2.micro"):
+    response = pricing.get_products(
+        ServiceCode='AmazonEC2',
+        Filters=[
+            {"Type": "TERM_MATCH", "Field": "location", "Value": region},
+            {"Type": "TERM_MATCH", "Field": "instanceType", "Value": instance_type},
+            {"Type": "TERM_MATCH", "Field": "operatingSystem", "Value": "Linux"},
+            {"Type": "TERM_MATCH", "Field": "tenancy", "Value": "Shared"},
+            {"Type": "TERM_MATCH", "Field": "preInstalledSw", "Value": "NA"},
+        ],
+        MaxResults=1
+    )
+
+    price = list(response['PriceList'])[0]
+    import json
+    terms = json.loads(price)['terms']['OnDemand']
+    for term in terms.values():
+        price_per_hour = list(term['priceDimensions'].values())[0]['pricePerUnit']['USD']
+        print(f"Estimated hourly cost for {instance_type}: ${price_per_hour}/hr")
+
+get_instance_prices()
+```
+
+> 🔧 You can extend this to fetch volumes, IPs, and total them.
+
+---
+
+Would you like me to bundle the **budget Terraform** and the **cost script** into your project zip or generate a new one?
+
+you said:
+
+yes please
+
+
+ChatGPT said:
+
+# Create additional files for budget alarm and Python cost estimator
+budget_tf = """\
+resource "aws_budgets_budget" "monthly_budget" {
+  name              = "MonthlyBudget"
+  budget_type       = "COST"
+  limit_amount      = "15"
+  limit_unit        = "USD"
+  time_unit         = "MONTHLY"
+
+  cost_filters = {
+    Service = "AmazonEC2"
+  }
+
+  notification {
+    comparison_operator = "GREATER_THAN"
+    notification_type   = "ACTUAL"
+    threshold           = 80
+    threshold_type      = "PERCENTAGE"
+
+    subscriber {
+      address           = "your-email@example.com"
+      subscription_type = "EMAIL"
+    }
+  }
+}
+"""
+
+cost_optimizer_py = """\
+import boto3
+import json
+
+ec2 = boto3.client('ec2')
+pricing = boto3.client('pricing', region_name='us-east-1')  # Must be us-east-1 for pricing
+
+def get_instance_prices(region=\"US West (Oregon)\", instance_type=\"t2.micro\"):
+    response = pricing.get_products(
+        ServiceCode='AmazonEC2',
+        Filters=[
+            {\"Type\": \"TERM_MATCH\", \"Field\": \"location\", \"Value\": region},
+            {\"Type\": \"TERM_MATCH\", \"Field\": \"instanceType\", \"Value\": instance_type},
+            {\"Type\": \"TERM_MATCH\", \"Field\": \"operatingSystem\", \"Value\": \"Linux\"},
+            {\"Type\": \"TERM_MATCH\", \"Field\": \"tenancy\", \"Value\": \"Shared\"},
+            {\"Type\": \"TERM_MATCH\", \"Field\": \"preInstalledSw\", \"Value\": \"NA\"},
+        ],
+        MaxResults=1
+    )
+
+    price = list(response['PriceList'])[0]
+    terms = json.loads(price)['terms']['OnDemand']
+    for term in terms.values():
+        price_per_hour = list(term['priceDimensions'].values())[0]['pricePerUnit']['USD']
+        print(f\"Estimated hourly cost for {instance_type}: ${price_per_hour}/hr\")
+
+get_instance_prices()
+"""
+
+# Write the new files into the Terraform directory
+with open(os.path.join(base_dir, "budget.tf"), "w") as f:
+    f.write(budget_tf)
+
+with open(os.path.join(base_dir, "cost_estimator.py"), "w") as f:
+    f.write(cost_optimizer_py)
+
+# Recreate the zip with the new files included
+zip_path = "/mnt/data/pykesys-aws-deploy.zip"
+with zipfile.ZipFile(zip_path, "w") as zipf:
+    for folder, _, files in os.walk(base_dir):
+        for file in files:
+            full_path = os.path.join(folder, file)
+            zipf.write(full_path, os.path.relpath(full_path, base_dir))
+
+zip_path
+
+
+----------------
+
+import os
+import zipfile
+
+# Rebuild the project directory and files
+base_dir = "/mnt/data/pykesys-aws-deploy"
+os.makedirs(base_dir, exist_ok=True)
+
+# File contents
+files = {
+    "main.tf": """provider "aws" {
+  region = var.region
+}
+
+data "aws_route53_zone" "main" {
+  name         = var.domain_name
+  private_zone = false
+}
+
+resource "aws_key_pair" "pykesys_key" {
+  key_name   = "pykesys-key"
+  public_key = var.public_key
+}
+
+resource "aws_security_group" "pykesys_sg" {
+  name        = "pykesys-sg"
+  description = "Allow SSH and HTTP"
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_instance" "pykesys_ec2" {
+  ami           = "ami-0c02fb55956c7d316"
+  instance_type = "t2.micro"
+  key_name      = aws_key_pair.pykesys_key.key_name
+  security_groups = [aws_security_group.pykesys_sg.name]
+
+  tags = {
+    Name = "pykesys-instance"
+  }
+}
+
+resource "aws_route53_record" "pykesys_dns" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = var.domain_name
+  type    = "A"
+  ttl     = 300
+  records = [aws_instance.pykesys_ec2.public_ip]
+}
+""",
+    "variables.tf": """variable "region" {
+  description = "AWS region"
+  type        = string
+}
+
+variable "domain_name" {
+  description = "The root domain name"
+  type        = string
+}
+
+variable "public_key" {
+  description = "SSH public key for instance access"
+  type        = string
+}
+""",
+    "outputs.tf": """output "instance_ip" {
+  value = aws_instance.pykesys_ec2.public_ip
+}
+
+output "ssh_command" {
+  value = "ssh ec2-user@${aws_instance.pykesys_ec2.public_ip}"
+}
+""",
+    "terraform.tfvars.example": """region      = "us-west-2"
+domain_name = "pykesys.com"
+public_key  = file("~/.ssh/id_rsa.pub")
+""",
+    "terraform.tfbackend": """bucket         = "pykesys-terraform-state"
+key            = "ec2/pykesys-instance.tfstate"
+region         = "us-west-2"
+dynamodb_table = "pykesys-terraform-locks"
+encrypt        = true
+""",
+    "budget.tf": """resource "aws_budgets_budget" "monthly_budget" {
+  name              = "MonthlyBudget"
+  budget_type       = "COST"
+  limit_amount      = "15"
+  limit_unit        = "USD"
+  time_unit         = "MONTHLY"
+
+  cost_filters = {
+    Service = "AmazonEC2"
+  }
+
+  notification {
+    comparison_operator = "GREATER_THAN"
+    notification_type   = "ACTUAL"
+    threshold           = 80
+    threshold_type      = "PERCENTAGE"
+
+    subscriber {
+      address           = "your-email@example.com"
+      subscription_type = "EMAIL"
+    }
+  }
+}
+""",
+    "cost_estimator.py": """import boto3
+import json
+
+ec2 = boto3.client('ec2')
+pricing = boto3.client('pricing', region_name='us-east-1')  # Must be us-east-1 for pricing
+
+def get_instance_prices(region="US West (Oregon)", instance_type="t2.micro"):
+    response = pricing.get_products(
+        ServiceCode='AmazonEC2',
+        Filters=[
+            {"Type": "TERM_MATCH", "Field": "location", "Value": region},
+            {"Type": "TERM_MATCH", "Field": "instanceType", "Value": instance_type},
+            {"Type": "TERM_MATCH", "Field": "operatingSystem", "Value": "Linux"},
+            {"Type": "TERM_MATCH", "Field": "tenancy", "Value": "Shared"},
+            {"Type": "TERM_MATCH", "Field": "preInstalledSw", "Value": "NA"},
+        ],
+        MaxResults=1
+    )
+
+    price = list(response['PriceList'])[0]
+    terms = json.loads(price)['terms']['OnDemand']
+    for term in terms.values():
+        price_per_hour = list(term['priceDimensions'].values())[0]['pricePerUnit']['USD']
+        print(f"Estimated hourly cost for {instance_type}: ${price_per_hour}/hr")
+
+get_instance_prices()
+"""
+}
+
+# Write files
+for filename, content in files.items():
+    with open(os.path.join(base_dir, filename), "w") as f:
+        f.write(content)
+
+# Create zip file
+zip_path = "/mnt/data/pykesys-aws-deploy.zip"
+with zipfile.ZipFile(zip_path, "w") as zipf:
+    for folder, _, files in os.walk(base_dir):
+        for file in files:
+            full_path = os.path.join(folder, file)
+            arcname = os.path.relpath(full_path, base_dir)
+            zipf.write(full_path, arcname)
+
+zip_path
+
+
+------------------
+
+Your updated Terraform deployment bundle is ready and now includes:
+
+✅ main.tf, variables.tf, outputs.tf
+
+✅ terraform.tfvars.example and terraform.tfbackend
+
+✅ budget.tf — to create an AWS monthly cost alarm
+
+✅ cost_estimator.py — Python script to estimate EC2 pricing using Boto3
+
+📦 Download pykesys-aws-deploy.zip
+
+Let me know if you'd like to add:
+
+SSL/TLS with ACM
+
+Auto-shutdown scheduling
+
+CI/CD deployment via GitHub Actions or CodePipeline ​​
+
+
+
+
+
+
+You said:
+segue - tell me about giant elephant ear plants, can they live in my zone 9b?
+
+
+
+
